@@ -3,8 +3,10 @@ module gRPC
 go 1.20
 
 require (
+	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	google.golang.org/grpc v1.53.0
 	google.golang.org/protobuf v1.28.1
+	gopkg.in/ini.v1 v1.67.0
 )
 
 require (

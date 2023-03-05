@@ -1,6 +1,6 @@
-## gRPC
+# gRPC
 
-### gRPCとは
+## gRPCとは
 Googleによって2015年にオープンソース化されたRPC（Remote Procedure Call）のためのプロトコル
 
 ### RPC（Remote Procedure Call）とは
@@ -148,3 +148,79 @@ service Greeter {
   rpc SayHello (stream SayHelloRequest) returns (stream SayHelloResponse);
 }
 ```
+
+# gRPCの応用
+
+## Interceptor
+- メソッドの前後に処理を行うための仕組み
+  - メソッドがリクエストを受け取る前、レスポンスを返した後のタイミングなどで任意の処理を割り込ませることが可能
+- 認証やロギング、監視やバリデーションなど**複数のRPCで共通して行いたい処理**で使用する
+- Unary用とストリーミング用が用意されている
+
+### Interceptorとは
+- Interceptorはサーバー側・クライアント側のどちらにも対応している
+  - サーバー側 
+    - `UnaryServerInterceptor`
+    - `StreamServerInterceptor`
+  - クライアント側
+    - `UnaryClientInterceptor`
+    - `StreamClientInterceptor`
+
+#### `UnaryServerInterceptor`の実装
+- 以下のシグニチャーを満たす関数を実装する
+
+```golang
+type UnaryServerInterceptor func(
+  ctx context.Context,
+  req interface{},
+  info *UnaryServerInfo,
+  handler UnaryHandler,
+) (resp interface{}, err error)
+```
+
+|  |  |
+| :--: | :--: |
+| ctx | context |
+| req | クライアントからのリクエスト |
+| info | メソッド名などのサーバー情報 |
+| handler | クライアントからコールされるメソッド |
+| resp | handlerからのレスポンス |
+
+#### サーバーへのInterceptor追加
+- `grpc.NewServer`の引数にオプションとして追加
+
+```golang
+s := grpc.NewServer(
+  grpc.UnaryInterceptor(myInterceptor()),
+)
+```
+
+#### クライアントへのInterceptor追加
+- `grpc.Dial`の引数にオプションとして追加
+
+```golang
+conn, err := grpc.Dial(
+  "localhost:50051",
+  grpc.WithInsecure(),
+  grpc.WithUnaryInterceptor(myInterceptor()),
+)
+```
+
+---
+
+## gRPCのエラーハンドリング
+- REST APIなどでは400番台や500番台などの、標準化されたHTTPステータスコードを使ってエラーハンドリングを行う
+- gRPCでは独自のステータスコードが定義されており、gRPCのエラーコードを使用してエラーハンドリングを行うことができる
+
+https://grpc.io/docs/guides/error/
+
+### gRPCのエラーコード
+| gRPC | HTTP | 内容 |
+| :--: | :--: | :--: |
+| DEADLINE_EXCEEDED | 504 Gateway Timeout | 処理が完了前にタイムアウト |
+| UNIMPLEMENTED | 501 Not Implemented | 処理が実装されていないか、サポートされていない |
+| UNAVAILABLE | 503 Service Unavailable | サービスが(一時的に)利用できない状態 |
+| UNKNOWN | 500 Internal Server Error | 不明なエラー |
+| UNAUTHENTICATED | 401 Unauthorized | リクエストに適切な認証情報がない |
+| PERMISSION_DENIED | 403 Forbidden | 呼び出し元に処理を実行する権限がない |
+

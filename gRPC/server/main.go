@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"gRPC/config"
 	"gRPC/pb"
 	"io"
 	"log"
@@ -11,7 +12,12 @@ import (
 	"os"
 	"time"
 
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 type server struct {
@@ -26,7 +32,7 @@ type server struct {
 func (*server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.ListFilesResponse, error) {
 	fmt.Println("ListFiles was invoked")
 
-	dir := "C:\\Users\\MH\\go\\src\\golang_gRPC\\gRPC\\storage"
+	dir := config.Config.StoragePath
 	paths, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -55,7 +61,12 @@ func (*server) Download(req *pb.DownloadRequest, stream pb.FileService_DownloadS
 	fmt.Println("Download was invoked")
 
 	filename := req.GetFilename()
-	path := "C:\\Users\\MH\\go\\src\\golang_gRPC\\gRPC\\storage\\" + filename
+	path := config.Config.StoragePath + filename
+
+	// エラーハンドリング
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return status.Error(codes.NotFound, "file was not found")
+	}
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -152,13 +163,75 @@ func (*server) UploadAndNotifyProgess(stream pb.FileService_UploadAndNotifyProgr
 	}
 }
 
+/*
+-----------------------------------------------------------
+* Interceptor - ロギング
+-----------------------------------------------------------
+*/
+func myLogging() grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req interface{},
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler) (resp interface{}, err error) {
+
+		log.Printf("request data : %+v", req)
+
+		resp, err = handler(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		log.Printf("response data : %+v", resp)
+
+		return resp, nil
+	}
+}
+
+/*
+-----------------------------------------------------------
+* Interceptor - 認証
+-----------------------------------------------------------
+*/
+func authorize(ctx context.Context) (context.Context, error) {
+	token, err := grpc_auth.AuthFromMD(ctx, "Bearer")
+	if err != nil {
+		return nil, err
+	}
+
+	if token != "test-token" {
+		return nil, status.Error(codes.Unauthenticated, "token is invalid")
+	}
+
+	return ctx, nil
+}
+
 func main() {
-	lis, err := net.Listen("tcp", "localhost:50051")
+	lis, err := net.Listen("tcp", "localhost:"+config.Config.Port)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	s := grpc.NewServer()
+	// SSL
+	creds, err := credentials.NewServerTLSFromFile(
+		config.Config.SSLPath+"localhost.pem",
+		config.Config.SSLPath+"localhost-key.pem",
+	)
+
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// Interceptorの実装
+	s := grpc.NewServer(
+		grpc.Creds(creds),
+		grpc.UnaryInterceptor(
+			grpc_middleware.ChainUnaryServer(
+				myLogging(),
+				grpc_auth.UnaryServerInterceptor(authorize),
+			),
+		),
+	)
 	pb.RegisterFileServiceServer(s, &server{})
 
 	fmt.Println("server is runnings...")

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"gRPC/config"
 	"gRPC/pb"
 	"io"
 	"log"
@@ -10,12 +11,19 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func main() {
+	// SSL
+	certFile := config.Config.RootCAPath + "rootCA.pem"
+	creds, err := credentials.NewClientTLSFromFile(certFile, "")
 
 	// サーバーとの接続
-	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure())
+	conn, err := grpc.Dial("localhost:"+config.Config.Port, grpc.WithTransportCredentials(creds))
 
 	if err != nil {
 		log.Fatalf("Failed to connet: %v", err)
@@ -31,7 +39,7 @@ func main() {
 	/* -----------------------------------------------------------
 	* Server Streaming RPC
 	-----------------------------------------------------------*/
-	// callDownload(client)
+	callDownload(client)
 
 	/* -----------------------------------------------------------
 	* Client Streaming RPC
@@ -41,7 +49,7 @@ func main() {
 	/* -----------------------------------------------------------
 	* Bidirectional Streaming RPC
 	-----------------------------------------------------------*/
-	CallUploadAndNotifyProgess(client)
+	// CallUploadAndNotifyProgess(client)
 }
 
 /*
@@ -50,7 +58,12 @@ func main() {
 -----------------------------------------------------------
 */
 func callListFiles(client pb.FileServiceClient) {
-	res, err := client.ListFiles(context.Background(), &pb.ListFilesRequest{})
+	// contextに定義したいメタデータを定義
+	md := metadata.New(map[string]string{
+		"authorization": "Bearer bad-token",
+	})
+	ctx := metadata.NewOutgoingContext(context.Background(), md)
+	res, err := client.ListFiles(ctx, &pb.ListFilesRequest{})
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -64,8 +77,12 @@ func callListFiles(client pb.FileServiceClient) {
 -----------------------------------------------------------
 */
 func callDownload(client pb.FileServiceClient) {
+	// deadlines(= timeout, 5sec)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
 	req := &pb.DownloadRequest{Filename: "name.txt"}
-	stream, err := client.Download(context.Background(), req)
+	stream, err := client.Download(ctx, req)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -77,7 +94,18 @@ func callDownload(client pb.FileServiceClient) {
 		}
 
 		if err != nil {
-			log.Fatalln(err)
+			resErr, ok := status.FromError(err)
+			if ok {
+				if resErr.Code() == codes.NotFound {
+					log.Fatalf("Error code : %v, Error message : %v", resErr.Code(), resErr.Message())
+				} else if resErr.Code() == codes.DeadlineExceeded {
+					log.Fatalln("Deadline Exceeded")
+				} else {
+					log.Fatalln("unknown grpc error")
+				}
+			} else {
+				log.Fatalln(err)
+			}
 		}
 
 		log.Printf("Response from Download(bytes): %v", res.GetData())
@@ -92,7 +120,7 @@ func callDownload(client pb.FileServiceClient) {
 */
 func CallUpload(client pb.FileServiceClient) {
 	filename := "sports.txt"
-	path := "C:\\Users\\MH\\go\\src\\golang_gRPC\\gRPC\\storage\\" + filename
+	path := config.Config.StoragePath + filename
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -143,7 +171,7 @@ func CallUpload(client pb.FileServiceClient) {
 */
 func CallUploadAndNotifyProgess(client pb.FileServiceClient) {
 	filename := "sports.txt"
-	path := "C:\\Users\\MH\\go\\src\\golang_gRPC\\gRPC\\storage\\" + filename
+	path := config.Config.StoragePath + filename
 
 	file, err := os.Open(path)
 	if err != nil {
